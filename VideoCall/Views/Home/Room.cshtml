@@ -1,0 +1,168 @@
+﻿@* <h1 style="text-align:center; font-family: Arial, sans-serif; color: #4CAF50; margin-bottom: 20px;">
+    Room ID: @ViewBag.RoomId
+</h1> *@
+
+<style>
+    body {
+        margin: 0;
+        padding: 0;
+        font-family: Arial, sans-serif;
+        background-color: #f0f0f5;
+        color: #333;
+    }
+
+    .video-container {
+        position: relative;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        margin-top: 20px;
+    }
+
+    video.main-video {
+        height:50%;
+        width: 80%;
+        max-width: 900px;
+        border: 2px solid #ddd;
+        border-radius: 12px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    video.small-video {
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+        width: 120px;
+        height: 90px;
+        border: 3px solid #4CAF50;
+        border-radius: 8px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .control-panel {
+        text-align: center;
+        margin: 20px 0;
+    }
+
+        .control-panel button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 0 10px;
+            transition: background-color 0.3s;
+        }
+
+            .control-panel button:hover {
+                background-color: #45a049;
+            }
+
+            .control-panel button:disabled {
+                background-color: #ddd;
+                color: #888;
+                cursor: not-allowed;
+            }
+</style>
+
+<div class="control-panel">
+    <button id="mute-btn">Mute/Unmute</button>
+    <button id="stop-video-btn">Stop/Start Video</button>
+</div>
+
+<div class="video-container">
+    <video id="main-video" class="main-video" muted autoplay></video>
+    <video id="small-video" class="small-video" muted autoplay></video>
+</div>
+
+<script src="~/lib/microsoft/signalr/dist/browser/signalr.min.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
+<script type="text/javascript" asp-append-version="true">
+    const ROOM_ID = '@ViewBag.RoomId';
+    let userId = null;
+    let localStream = null;
+    const Peers = {};
+
+    const connection = new signalR.HubConnectionBuilder().withUrl("/meeting").build();
+
+    const myPeer = new Peer();
+
+    myPeer.on('open', id => {
+        userId = id;
+
+        const startSignalR = async () => {
+            await connection.start();
+            await connection.invoke("JoinRoom", ROOM_ID, userId);
+        };
+        startSignalR();
+    });
+
+    const mainVideo = document.getElementById('main-video');
+    const smallVideo = document.getElementById('small-video');
+
+    navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true
+    }).then(stream => {
+        addVideoStream(smallVideo, stream); 
+        localStream = stream;
+
+        const muteBtn = document.getElementById('mute-btn');
+        muteBtn.addEventListener('click', () => {
+            localStream.getAudioTracks()[0].enabled = !localStream.getAudioTracks()[0].enabled;
+            muteBtn.textContent = localStream.getAudioTracks()[0].enabled ? 'Mute' : 'Unmute';
+        });
+
+        const stopVideoBtn = document.getElementById('stop-video-btn');
+        stopVideoBtn.addEventListener('click', () => {
+            localStream.getVideoTracks()[0].enabled = !localStream.getVideoTracks()[0].enabled;
+            stopVideoBtn.textContent = localStream.getVideoTracks()[0].enabled ? 'Stop Video' : 'Start Video';
+        });
+    });
+
+    connection.on('user-connected', id => {
+        if (userId === id) return;
+
+        console.log(`User connected: ${id}`);
+        connectNewUser(id, localStream);
+    });
+
+    connection.on('user-disconnected', id => {
+        console.log(`User disconnected: ${id}`);
+
+        if (Peers[id]) Peers[id].close();
+    });
+
+    myPeer.on('call', call => {
+        call.answer(localStream);
+
+        const userVideo = document.createElement('video');
+        call.on('stream', userVideoStream => {
+            addVideoStream(mainVideo, userVideoStream); 
+    });
+
+    const addVideoStream = (video, stream) => {
+        video.srcObject = stream;
+        video.addEventListener('loadedmetadata', () => {
+            video.play();
+        });
+    };
+
+    const connectNewUser = (userId, localStream) => {
+        const userVideo = document.createElement('video');
+        const call = myPeer.call(userId, localStream);
+
+        call.on('stream', userVideoStream => {
+            addVideoStream(mainVideo, userVideoStream); 
+        });
+
+        call.on('close', () => {
+            userVideo.remove();
+        });
+
+        Peers[userId] = call;
+    };
+</script>
